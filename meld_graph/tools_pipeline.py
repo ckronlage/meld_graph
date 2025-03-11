@@ -45,7 +45,7 @@ def return_bids_T1_FLAIR(bids_dir, subject_id):
     with open(config_file, "r") as json_file:
         dict = json.load(json_file)
     # Create query
-    for modality in ['T1', 'FLAIR']:
+    for modality in ['T1', 'FLAIR', 'T1_raw']:
         query = dict[modality]
         query['subject'] = subject_id
         # Get a list of matching files

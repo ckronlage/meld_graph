@@ -10,8 +10,9 @@ from scripts.data_preparation.extract_features import io_meld
 from scripts.data_preparation.extract_features.create_identity_reg import create_identity
 from meld_graph.tools_pipeline import get_m
 
-def sample_flair_smooth_features(subject_id, subjects_dir, verbose=False):
+def sample_flair_smooth_features(subject_dict, subjects_dir, verbose=False):
     #TODO: rename function
+    subject_id = subject_dict['id']
 
     os.makedirs(opj(subjects_dir, subject_id, "surf_meld"), exist_ok=True)
 
@@ -143,11 +144,40 @@ def sample_flair_smooth_features(subject_id, subjects_dir, verbose=False):
             print(get_m(f'COMMAND failing : {command} with error {stderr}', subject_id, 'ERROR'))
             return False
 
+       if subject_dict['T1_raw_path'] is not None:
+            command = f"mri_convert {subject_dict['T1_raw_path']} {subjects_dir}/{subject_id}/mri/T1raw.mgz"
+            proc = Popen(command, shell=True, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, encoding='utf-8')
+            stdout, stderr = proc.communicate()
+            if verbose:
+                print(stdout)
+            if proc.returncode != 0:
+                print(
+                    get_m(f'COMMAND failing : {command} with error {stderr}', subject_id, 'ERROR'))
+                return False
 
-        shutil.copy(
-            opj(subjects_dir, subject_id, "surf", f"{hemi}.w-g.pct.mgh"),
-            opj(subjects_dir, subject_id, "surf_meld", f"{hemi}.w-g.pct.mgh"),
-        )
+            command = f"SUBJECTS_DIR={subjects_dir} pctsurfcon --s {subject_id} --fsvol T1raw --b w-g.pct.T1raw"
+            proc = Popen(command, shell=True, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, encoding='utf-8')
+            stdout, stderr = proc.communicate()
+            if verbose:
+                print(stdout)
+            if proc.returncode != 0:
+                print(
+                    get_m(f'COMMAND failing : {command} with error {stderr}', subject_id, 'ERROR'))
+                return False
+            shutil.copy(
+                opj(subjects_dir, subject_id, "surf",
+                    f"{hemi}.w-g.pct.T1raw.mgh"),
+                opj(subjects_dir, subject_id,
+                    "surf_meld", f"{hemi}.w-g.pct.mgh"),
+            )
+        else:
+            shutil.copy(
+                opj(subjects_dir, subject_id, "surf", f"{hemi}.w-g.pct.mgh"),
+                opj(subjects_dir, subject_id,
+                    "surf_meld", f"{hemi}.w-g.pct.mgh"),
+            )
 
 
 if __name__ == "__main__":

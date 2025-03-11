@@ -180,8 +180,9 @@ def freesurfer_subject(subject, fs_folder, verbose=False):
         return False
     
 
-def extract_features(subject_id, fs_folder, output_dir, verbose=False):
-    
+def extract_features(subject_dict, fs_folder, output_dir, verbose=False):
+    subject_id = subject_dict['id']
+
     #check FS outputs
     if check_FS_outputs(opj(fs_folder, subject_id))==False:
         print(get_m(f'Files are missing in Freesurfer outputs for subject {subject_id}. Check {opj(fs_folder, subject_id)} is complete before re-running', subject_id, 'ERROR'))
@@ -204,7 +205,7 @@ def extract_features(subject_id, fs_folder, output_dir, verbose=False):
 
     #create basic features
     print(get_m(f'Sampling features in native space', subject_id, 'INFO'))
-    result = sample_flair_smooth_features(subject_id, fs_folder, verbose=verbose)
+    result = sample_flair_smooth_features(subject_dict, fs_folder, verbose=verbose)
     if result == False:
         return False
 
@@ -347,7 +348,7 @@ def run_subject_segmentation(subject_id, harmo_code="noHarmo", use_fastsurfer=Fa
     
     ### EXTRACT SURFACE-BASED FEATURES ###
     output_dir = opj(BASE_PATH, f"MELD_{harmo_code}")
-    result = extract_features(subject_id, fs_folder=fs_folder, output_dir=output_dir, verbose=verbose)
+    result = extract_features(subject_dict, fs_folder=fs_folder, output_dir=output_dir, verbose=verbose)
     if result == False:
             return False
 
