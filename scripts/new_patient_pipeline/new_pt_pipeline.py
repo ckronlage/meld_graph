@@ -59,6 +59,14 @@ if __name__ == "__main__":
                         default=False,
                         action="store_true",
                         )
+    parser.add_argument("--uhf_highres",
+                        help="use highres pipeline for UHF data "
+                             "(i.e., bias field correction with SPM, freesurfer sub-millimetric mode (-hires) "
+                             "and synthstrip (--nocsf) skullstripping)",
+                        required=False,
+                        default=False,
+                        action="store_true",
+                        )
     parser.add_argument("--threads",
                         help="number of threads (openmp) to use within a single freesurfer segmentation. "
                              "This runs one recon-all call at a time and speeds up that one call; "
@@ -68,6 +76,14 @@ if __name__ == "__main__":
                         default=1,
                         type=int,
                         )
+    parser.add_argument("--freesurfer_args",
+                        help="additional arguments to pass to freesurfer recon-all. "
+                             "Quote each one so it is not parsed as an option of this script, "
+                             "e.g. --freesurfer_args '-cw256' '-notal-check'",
+                        required=False,
+                        default=None,
+                        type=str,
+                        nargs="*")
     parser.add_argument('-demos', '--demographic_file', 
                         type=str, 
                         help='provide the demographic files for the harmonisation',
@@ -162,7 +178,9 @@ if __name__ == "__main__":
                             sub_id=args.id, 
                             use_parallel=args.parallelise, 
                             use_fastsurfer=args.fastsurfer,
+                            use_uhf_highres=args.uhf_highres,
                             threads=args.threads,
+                            freesurfer_args=args.freesurfer_args,
                             verbose = args.debug_mode
                             )
         if result == False:

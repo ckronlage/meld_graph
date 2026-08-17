@@ -23,9 +23,11 @@ import tempfile
 import glob
 import shutil
 import pandas as pd
+import nibabel as nib
 from os.path import join as opj
 from meld_graph.paths import BASE_PATH, MELD_DATA_PATH, DEMOGRAPHIC_FEATURES_FILE, FS_SUBJECTS_PATH, CLIPPING_PARAMS_FILE
 from meld_graph.tools_pipeline import get_m, create_demographic_file, get_anat_files
+from meld_graph import bias_field_spm
 from scripts.data_preparation.extract_features.create_xhemi import run_parallel_xhemi, create_xhemi
 from scripts.data_preparation.extract_features.create_training_data_hdf5 import create_training_data_hdf5
 from scripts.data_preparation.extract_features.sample_FLAIR_smooth_features import sample_flair_smooth_features
@@ -203,7 +205,112 @@ def freesurfer_subject(subject, fs_folder, threads=1, freesurfer_args=None, verb
         print(get_m(f'Cortical parcellation using Freesurfer failed. Please check the log at {fs_folder}/{subject_id}/scripts/recon-all.log', subject_id, 'ERROR'))
         print(get_m(f'COMMAND failing : {command} with error {stderr}', None, 'ERROR'))
         return False
-    
+
+def uhf_highres_freesurfer_subject(subject, fs_folder, threads=1, freesurfer_args=None, verbose=False):
+    #run freesurfer recon-all segmentation on 1 subject
+
+    subject_id = subject['id']
+    subject_t1_path = subject['T1_path']
+    subject_flair_path = subject['FLAIR_path']
+
+    # get subject folder
+    # If freesurfer outputs already exist for this subject, continue running from where it stopped
+    # Else, run FS
+    if os.path.isdir(opj(fs_folder, subject_id)):
+        if check_FS_outputs(opj(fs_folder, subject_id))==True:
+            print(get_m(f'Freesurfer outputs already exists for subject {subject_id}. Freesurfer will be skipped', subject_id, 'STEP 1'))
+            return True
+        if check_FS_outputs(opj(fs_folder, subject_id))==False:
+            print(get_m(f'Freesurfer outputs already exists for subject {subject_id} but is incomplete. Delete folder {opj(fs_folder, subject_id)} and reran', subject_id, 'ERROR'))
+            return False
+    else:
+        pass 
+
+    # check for negative values and rescale intensities if needed
+    # 
+    # Negative values can occur in MP2RAGE uniform volumes (usually range [-0.5, 0.5]).
+    # This is a problem a) for SPM and b) for freesurfer (freesurfer normalizes intensities
+    # but uses the input rawavg.mgz for calculating gray-white contrast, which is an 
+    # important MELD feature).)
+    t1_img = nib.load(subject_t1_path)
+    t1_data = t1_img.get_fdata()
+    min_val = np.min(t1_data)
+    if min_val < 0:
+        print(get_m(f'Rescaling intensities to be all positive for subject {subject_id}', subject_id, 'INFO'))
+        subject_t1_rescaled_path = os.path.join(MELD_DATA_PATH, 'output', 'preproc', subject_id, 'rescaled_' + os.path.basename(subject_t1_path))
+        os.makedirs(os.path.dirname(subject_t1_rescaled_path), exist_ok=True)
+        t1_data_rescaled = t1_data - min_val
+        t1_img_rescaled = nib.Nifti1Image(t1_data_rescaled, t1_img.affine)
+        nib.save(t1_img_rescaled, subject_t1_rescaled_path)
+        subject_t1_path = subject_t1_rescaled_path
+
+    # bias field correct using SPM
+    print(get_m(f'Bias field correction using SPM for subject {subject_id}', subject_id, 'INFO'))
+    subject_t1_bfc_path = os.path.join(MELD_DATA_PATH, 'output', 'preproc', subject_id, 'bfc_' + os.path.basename(subject_t1_path))
+    os.makedirs(os.path.dirname(subject_t1_bfc_path), exist_ok=True)
+    bias_field_spm.bias_field_correct_SPM(subject_t1_path, subject_t1_bfc_path)
+
+    # create expert.opts file
+    # -hires needs a reduced number of mris_inflate iterations
+    N_MRIS_INFLATE = 50
+    expert_opts = [f'mris_inflate -n {N_MRIS_INFLATE}']
+    if subject_flair_path != None:
+        expert_opts.append(PLACE_MM_PIAL_SURF_OPTS)
+    expert_opts_path = write_expert_opts(subject_id, expert_opts)
+
+
+    print(get_m('freesurfer autorecon1-stage -noskullstrip', subject_id, 'INFO'))
+    command = f"$FREESURFER_HOME/bin/recon-all -sd {fs_folder} -s {subject_id} -i {subject_t1_bfc_path} -autorecon1 -noskullstrip -hires -expert {expert_opts_path} -threads {threads}"
+    if freesurfer_args is not None:
+        command += ' ' + ' '.join(freesurfer_args)
+        print(get_m(f'Additional freesurfer arguments added: {freesurfer_args}', subject_id, 'INFO'))
+    proc = Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
+    stdout, stderr= proc.communicate()
+    if verbose:
+        print(stdout)
+    if proc.returncode==0:
+        print(get_m(f'freesurfer autorecon1 -noskullstrip finished', subject_id, 'INFO'))
+    else:
+        print(get_m(f'freesurfer autorecon1 failed. Please check the log at {fs_folder}/{subject_id}/scripts/recon-all.log', subject_id, 'ERROR'))
+        print(get_m(f'COMMAND failing : {command} with error {stderr}', None, 'ERROR'))
+        return False
+
+    print(get_m('skullstripping with mri_synthstrip', subject_id, 'INFO'))
+    command = f"mri_synthstrip -i {opj(fs_folder,subject_id,'mri','T1.mgz')} -o {opj(fs_folder,subject_id,'mri','brainmask.mgz')} --no-csf"
+    proc = Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
+    stdout, stderr= proc.communicate()
+    if verbose:
+        print(stdout)
+    if proc.returncode==0:
+        print(get_m(f'mri_synthstrip finished', subject_id, 'INFO'))
+    else:
+        print(get_m(f'mri_synthstrip failed', subject_id, 'ERROR'))
+        print(get_m(f'COMMAND failing : {command} with error {stderr}', None, 'ERROR'))
+        return False
+
+    # setup cortical segmentation command
+    if subject_flair_path != None:
+        command = f"$FREESURFER_HOME/bin/recon-all -sd {fs_folder} -s {subject_id} -autorecon2 -autorecon3 -FLAIR {subject_flair_path} -FLAIRpial -hires -threads {threads}"
+    else:
+        command = f"$FREESURFER_HOME/bin/recon-all -sd {fs_folder} -s {subject_id} -autorecon2 -autorecon3 -hires -threads {threads}"
+
+    if freesurfer_args is not None:
+        command += ' ' + ' '.join(freesurfer_args)
+
+    print(get_m('freesurfer autorecon2/3', subject_id, 'INFO'))
+    starting.acquire()  # no other process can get it until it is released
+    proc = Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
+    threading.Timer(120, starting.release).start()  # release in two minutes
+    stdout, stderr= proc.communicate()
+    if verbose:
+        print(stdout)
+    if proc.returncode==0:
+        print(get_m(f'Finished cortical parcellation', subject_id, 'INFO'))
+    else:
+        print(get_m(f'Cortical parcellation using Freesurfer failed. Please check the log at {fs_folder}/{subject_id}/scripts/recon-all.log', subject_id, 'ERROR'))
+        print(get_m(f'COMMAND failing : {command} with error {stderr}', None, 'ERROR'))
+        return False
+
 
 def extract_features(subject_id, fs_folder, output_dir, verbose=False):
     
@@ -250,8 +357,17 @@ def extract_features(subject_id, fs_folder, output_dir, verbose=False):
     if result == False:
         return False
  
-def run_subjects_segmentation_parallel(subject_ids, num_procs=10, harmo_code="noHarmo", use_fastsurfer=False, freesurfer_args=None, verbose=False):
+def run_subjects_segmentation_parallel(subject_ids,
+                                       num_procs=10,
+                                       harmo_code="noHarmo",
+                                       use_fastsurfer=False,
+                                       use_uhf_highres=False,
+                                       freesurfer_args=None,
+                                       verbose=False):
     # parallel version of the pipeline, finish each stage for all subjects first
+
+    if use_uhf_highres:
+        raise NotImplementedError('Parallelisation not implemented for ultra-high field highres freesurfer segmentation')
 
     ### SEGMENTATION ###
     ini_freesurfer = format("$FREESURFER_HOME/SetUpFreeSurfer.sh")
@@ -332,9 +448,16 @@ def run_subjects_segmentation_parallel(subject_ids, num_procs=10, harmo_code="no
 
     return subject_ids
 
-def run_subject_segmentation(subject_id, harmo_code="noHarmo", use_fastsurfer=False, threads=1, freesurfer_args=None, verbose=False):
+def run_subject_segmentation(subject_id, 
+                             harmo_code="noHarmo", 
+                             use_fastsurfer=False, 
+                             use_uhf_highres=False,
+                             threads=1, 
+                             freesurfer_args=None,
+                             verbose=False):
     # pipeline to segment the brain, exract surface-based features for 1 subject
-        
+
+
     ### SEGMENTATION ###
     ini_freesurfer = format("$FREESURFER_HOME/SetUpFreeSurfer.sh")
     proc = Popen(ini_freesurfer, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
@@ -352,21 +475,39 @@ def run_subject_segmentation(subject_id, harmo_code="noHarmo", use_fastsurfer=Fa
     subject_dict = get_anat_files(subject_id)
     
     if use_fastsurfer:
+        if use_uhf_highres:
+            raise NotImplementedError('fastsurfer with uhf_highres is not implemented: '
+                            'the ultra-high field pipeline is built on freesurfer recon-all -hires')
+        
         ## first processing stage with fastsurfer: segmentation
         init(multiprocessing.Lock())
-        result = fastsurfer_subject(subject_dict,fs_folder, verbose=verbose)
+        result = fastsurfer_subject(subject_dict, fs_folder, verbose=verbose)
         if result == False:
             return False
 
-        ## flair pial correction
+        if subject_dict['FLAIR_path'] is not None:
+            ## flair pial correction
+            init(multiprocessing.Lock())
+            result = fastsurfer_flair(subject_dict, fs_folder, verbose=verbose)
+            if result == False:
+                return False
+    elif use_uhf_highres:
         init(multiprocessing.Lock())
-        result = fastsurfer_flair(subject_dict,fs_folder, verbose=verbose)
+        result = uhf_highres_freesurfer_subject(subject_dict, 
+                                                fs_folder,
+                                                threads=threads,
+                                                freesurfer_args=freesurfer_args,
+                                                verbose=verbose)
         if result == False:
             return False
     else:
         ## processing with freesurfer: segmentation
         init(multiprocessing.Lock())
-        result = freesurfer_subject(subject_dict, fs_folder, threads=threads, freesurfer_args=freesurfer_args, verbose=verbose)
+        result = freesurfer_subject(subject_dict,
+                                    fs_folder, 
+                                    threads=threads, 
+                                    freesurfer_args=freesurfer_args, 
+                                    verbose=verbose)
         if result == False:
             return False
     
@@ -377,7 +518,15 @@ def run_subject_segmentation(subject_id, harmo_code="noHarmo", use_fastsurfer=Fa
             return False
 
 
-def run_script_segmentation(list_ids=None, sub_id=None, harmo_code='noHarmo', use_parallel=False, use_fastsurfer=False, threads=1, freesurfer_args=None, verbose=False ):
+def run_script_segmentation(list_ids=None, 
+                            sub_id=None,
+                            harmo_code='noHarmo',
+                            use_parallel=False, 
+                            use_fastsurfer=False, 
+                            use_uhf_highres=False, 
+                            threads=1, 
+                            freesurfer_args=None,
+                            verbose=False ):
     harmo_code = str(harmo_code)
     subject_id=None
     subject_ids=None
@@ -400,7 +549,13 @@ def run_script_segmentation(list_ids=None, sub_id=None, harmo_code='noHarmo', us
     
     if subject_id != None:
         #launch segmentation and feature extraction for 1 subject
-        result = run_subject_segmentation(subject_id,  harmo_code = harmo_code, use_fastsurfer = use_fastsurfer, threads=threads, freesurfer_args=freesurfer_args, verbose=verbose)
+        result = run_subject_segmentation(subject_id, 
+                                          harmo_code=harmo_code,
+                                          use_fastsurfer=use_fastsurfer,
+                                          use_uhf_highres=use_uhf_highres,
+                                          threads=threads,
+                                          freesurfer_args=freesurfer_args,
+                                          verbose=verbose)
         if result == False:
             print(get_m(f'One step of the pipeline has failed. Process has been aborted for this subject', subject_id, 'ERROR'))
             return False
@@ -408,7 +563,12 @@ def run_script_segmentation(list_ids=None, sub_id=None, harmo_code='noHarmo', us
         if use_parallel:
             #launch segmentation and feature extraction in parallel
             print(get_m(f'Run subjects in parallel', None, 'INFO'))
-            subject_ids_succeed = run_subjects_segmentation_parallel(subject_ids, harmo_code = harmo_code, use_fastsurfer = use_fastsurfer, freesurfer_args=freesurfer_args, verbose=verbose)
+            subject_ids_succeed = run_subjects_segmentation_parallel(subject_ids, 
+                                                                     harmo_code = harmo_code, 
+                                                                     use_fastsurfer = use_fastsurfer, 
+                                                                     use_uhf_highres=use_uhf_highres, 
+                                                                     freesurfer_args=freesurfer_args,
+                                                                     verbose=verbose)
             subject_ids_failed= list(set(subject_ids).difference(subject_ids_succeed))
             if len(subject_ids_failed):
                 print(get_m(f'One step of the pipeline has failed. Process has been aborted for subjects {subject_ids_failed}', None, 'ERROR'))
@@ -418,7 +578,13 @@ def run_script_segmentation(list_ids=None, sub_id=None, harmo_code='noHarmo', us
             print(get_m(f'Run subjects one after another', None, 'INFO'))
             subject_ids_failed=[]
             for subj in subject_ids:
-                result = run_subject_segmentation(subj,  harmo_code = harmo_code, use_fastsurfer = use_fastsurfer, threads=threads, freesurfer_args=freesurfer_args, verbose=verbose)
+                result = run_subject_segmentation(subj, 
+                                                  harmo_code = harmo_code, 
+                                                  use_fastsurfer = use_fastsurfer, 
+                                                  use_uhf_highres=use_uhf_highres, 
+                                                  threads=threads, 
+                                                  freesurfer_args=freesurfer_args,
+                                                  verbose=verbose)
                 if result == False:
                     print(get_m(f'One step of the pipeline has failed. Process has been aborted for this subject', subj, 'ERROR'))
                     subject_ids_failed.append(subj)
@@ -460,6 +626,14 @@ if __name__ == "__main__":
                         help="run the freesurfer segmentation of several subjects at the same time, "
                              "as one single-threaded recon-all process per subject. "
                              "--threads is ignored in this mode.", 
+                        required=False,
+                        default=False,
+                        action="store_true",
+                        )
+    parser.add_argument("--uhf_highres",
+                        help="use highres pipeline for UHF data "
+                             "(i.e., bias field correction with SPM, freesurfer sub-millimetric mode (-hires) "
+                             "and synthstrip (--nocsf) skullstripping)",
                         required=False,
                         default=False,
                         action="store_true",
@@ -529,6 +703,7 @@ if __name__ == "__main__":
                         sub_id=args.id, 
                         use_parallel=args.parallelise,
                         use_fastsurfer=args.fastsurfer,
+                        use_uhf_highres=args.uhf_highres,
                         threads=args.threads,
                         freesurfer_args=args.freesurfer_args,
                         verbose = args.debug_mode
