@@ -1,108 +1,86 @@
 <img src="https://raw.githubusercontent.com//MELDProject/meld_graph/main/docs/images/MELD_logo.png" alt="MELD logo" width="100" align="left"/> 
 
+
 # MELD Graph 
 
-**Full documentation: [here](https://meld-graph.readthedocs.io/en/latest/index.html)**
-
-**Intro to MELD Graph and installation videos: [here](https://youtu.be/PIM1gwYNLns)**
-
-Graph based FCD lesion segmentation for the [MELD project](https://meldproject.github.io/).
-
-This package is a pipeline to segment FCD-lesions from MRI scans. 
-
-## UPDATE
-
-**<span style="color: red;">REGISTER TO GET YOUR MELD LICENSE</span>**:
-We request that all MELD graph users fill the [MELD Graph registration form](https://docs.google.com/forms/d/e/1FAIpQLSdocMWtxbmh9T7Sv8NT4f0Kpev-tmRI-kngDhUeBF9VcZXcfg/viewform?usp=header). Following registration you will received a license file. This file will be needed for use of all future MELD Graph versions v2.2.4 and above. Your email address will be added to the MELD Graph mailing list. This will ensure that we can update you about bugs fix and new releases. 
-
-**<span style="color: red;">PLEASE UPDATE TO V2.2.4 OR ABOVE</span>**: 
-If you are working with version v2.2.3 or below please update to the [latest version of MELD Graph](https://github.com/MELDProject/meld_graph/releases). Older versions will be deprecated and not supported. To update your code please follow the guidelines [Updating MELD Graph version](https://meld-graph.readthedocs.io/en/latest/FAQs.html#Updating-MELD-Graph-version) from our FAQ.
-
-![overview](https://raw.githubusercontent.com//MELDProject/meld_graph/main/docs/images/Fig1_pipeline.jpg)
-
-*Code Authors : Mathilde Ripart, Hannah Spitzer, Sophie Adler, Konrad Wagstyl*
-
-## Notes
-
-This package is intended to be used as a research tool to segment FCD lesions in patients with focal epilepsy where a FCD is suspected. It can be run on 1.5T or 3T MRI data. A 3D T1 (WITHOUT gadolinium agent) is required and it is optional but advised to include the 3D FLAIR. 
-
-It is not appropriate to use this algorithm on patients with:
-- tuberous sclerosis
-- suspected hippocampal sclerosis
-- hypothalamic hamartoma
-- periventricular nodular heterotopia
-- other focal epilepsy pathologies
-- previous resection cavities
-
-**Harmonisation** - MRI data from different MRI scanners looks subtly different. This means that feature measurements, e.g. cortical thickness measurements, differ depending on which MRI scanner a patient was scanned on. We harmonise features (using NeuroCombat) to adust for site based differences. We advise new users to harmonise data from their MRI scanner to the MELD graph dataset. Please follow the guidelines to harmonise the data from your site. Note: the model will still produce predictions on new, unharmonised subjects but the number of false positive predictions is higher if the data is not harmonised.
-
-This package also contains code for training and evaluating graph-based U-net lesion segmentation models operating on icosphere meshes. \
-In addition to lesion segmentation, the model also contain auxiliary distance regression and hemisphere classification losses.
-
-For more information on how the algorithm was developed and expected performance - check our papers: 
-- [Ripart et al.,2025 JAMA Neurology -  Detection of epileptogenic focal cortical dysplasia using graph neural networks: a MELD study](https://jamanetwork.com/journals/jamaneurology/fullarticle/2830410)
-- [Spitzer, Ripart et al., 2022 Brain - the original MELD FCD pipeline and dataset](https://academic.oup.com/brain/advance-article/doi/10.1093/brain/awac224/6659752)
-- [Spitzer et al., 2023 MICCAI - the updated graph-based model architecture](https://arxiv.org/abs/2306.01375)
-
+> **This is a fork** of [MELDProject/meld_graph](https://github.com/MELDProject/meld_graph) v2.2.6 and adds a flag for processing **ultra-high field (7T) MRI** data. Everything not 7T-specific is unchanged - follow the documentation in the original repository below for installation, data preparation, harmonisation and interpretation of the results.
 
 ## Disclaimer
 
 The MELD surface-based graph FCD detection algorithm is intended for research purposes only and has not been reviewed or approved by the Medicines and Healthcare products Regulatory Agency (MHRA), European Medicine Agency (EMA) or by any other agency. Any clinical application of the software is at the sole risk of the party engaged in such application. There is no warranty of any kind that the software will produce useful results in any way. Use of the software is at the recipient's own risk.
 
-## Installation & Use of the MELD FCD prediction pipeline
+## Running on ultra-high field (7T) data
 
-### Installations available 
-You can install and use the MELD FCD prediction pipeline with :
-- [**docker container**](https://meld-graph.readthedocs.io/en/latest/install_docker.html) recommended for easy installation of the pipeline as all the prerequisite packages are already embedded into the container. Note: Dockers are not working on High Performance Computing (HCP) systems
-- [**native installation**](https://meld-graph.readthedocs.io/en/latest/install_native.html) recommended for Mac and users that want to modify the code and/or use the code to train/test their own classifier. 
-- [**singularity container**](https://meld-graph.readthedocs.io/en/latest/install_singularity.html) enables to run a container on High Performance Computing (HCP) systems.
+This section describes **only what differs in this fork if you would like to use the adapted preprocessing and segmentation**. Data preparation, harmonisation and interpretation of results is otherwise unchanged.
 
-**IMPORTANT NOTE**: The installations listed above are not supported on Virtual Machines. Please install MELD Graph on full Linux, Windows or MAC computers
+**This version is only supported to be run via a container image (Docker/Singularity/Apptainer)** because of the SynthStrip and SPM dependencies that are otherwise complicated to install. 
 
-**YouTube tutorials available for the [docker installation](https://youtu.be/oduOe6NDXLA) and [native installation](https://youtu.be/jUCahJ-AebM)**
+### 1. Build this fork's container image
 
+The UHF pipeline needs two tools that the published `meldproject/meld_graph` image does not contain, both added to the `Dockerfile` in this fork:
 
-### Running the pipeline 
+- **SPM 25** with the MATLAB Runtime R2024b (for bias field correction).
+- **SynthStrip** from FreeSurfer 8.0.0 with `synthstrip.nocsf.1.pt` model weights (for skullstripping).
 
-**<span style="color: red;">IMPORTANT new recommandation**: We have received feedback regarding inconsistencies in MELD Graph results when using T1w+FLAIR scans compared to T1w scan alone. We advise users to primarily rely on T1w scans for lesion detection. If additional sensitivity is needed, FLAIR can be added to explore other potential clusters. However, these results will need to be interpreted with extra caution, as FLAIR-based clusters may include more false positives. For more information and guidance on how to run a second run with FLAIR see our [FAQs](https://meld-graph.readthedocs.io/en/latest/FAQs.html#variability-in-meld-graph-results-when-using-t1wflair-scans).
+Build this fork's image:
 
-Once installed you will be able to use the MELD FCD prediction pipeline on your data following the steps:
-1. Prepare your data : [guidelines](https://meld-graph.readthedocs.io/en/latest/prepare_data.html)
-2. Compute the harmonisation parameters : [guidelines](https://meld-graph.readthedocs.io/en/latest/harmonisation.html) (OPTIONAL but highly recommended)
-3. Run the prediction pipeline: [guidelines](https://meld-graph.readthedocs.io/en/latest/run_prediction_pipeline.html)
-4. Interpret the results: [guidelines](https://meld-graph.readthedocs.io/en/latest/interpret_results.html)
+```bash
+docker build -t meld_graph:uhf .
+```
 
-**YouTube tutorials available to run the [harmonisation step](https://youtu.be/te_TR6sA5sQ), to run the [prediction pipeline](https://youtu.be/OZg1HSzqKyc) and to [interpret the pipeline results](https://youtu.be/dSyd1zOn4F8)**
+And point the docker `compose.yml` at it:
+```yaml
+services:
+  meld_graph:
+    image: meld_graph:uhf
+```
+Or convert to an Apptainer image:
+```
+apptainer build meld_graph.sif docker-daemon://meld_graph:uhf 
+```
 
-**FAQs** 
-If you have a question or if you are running into issues at any stage (installation/use/interpretation), have a look at our [FAQs](https://meld-graph.readthedocs.io/en/latest/FAQs.html) page as we may have already have a solution. 
+Everything else about the container setup (mounting the data folder, the FreeSurfer and MELD licences, etc.) follows the original installation instruction.
 
-**What is the harmonisation process ?**
+### 2. Denoise MP2RAGE UNI input image (optional but recommended)
 
-Scanners can induce a bias in the MRI data. The MELD pipeline recommends adjusting for these scanners differences by running a preliminary harmonisation step to compute the harmonisation parameters for that specific scanner. Note: this step needs to be run only once, and requires data from at least 20 subjects acquired on the same scanner and demographic information (e.g age and sex). See [harmonisation instructions](https://meld-graph.readthedocs.io/en/latest/harmonisation.html) for more details. 
+MP2RAGE uniform (UNI) images have a noisy background, which can impact with segmentation. `scripts/uhf/mp2rage_denoise.py` implements the "robust combination" of [O'Brien et al. (2014)](https://doi.org/10.1371/journal.pone.0099676). Run it before the pipeline and use the denoised UNI as the T1 of your BIDS dataset:
 
-Note: The MELD pipeline can also be run without harmonisation, with a small drop in performance.
+```bash
+python scripts/uhf/mp2rage_denoise.py \
+    --uni  sub-01_UNI.nii.gz \
+    --inv1 sub-01_inv1.nii.gz \
+    --inv2 sub-01_inv2.nii.gz \
+    --out  sub-01_UNI_denoised.nii.gz \
+    --beta 0.1
+```
 
-## Additional information
-With the native installation of the MELD classifier you can reproduce the figures from our paper and train/evaluate your own models.
-For more details, check out the guides linked below:
-- [Notebooks to reproduce figures](https://meld-graph.readthedocs.io/en/latest/figure_notebooks.html)
-- [Train and evaluate models](https://meld-graph.readthedocs.io/en/latest/train_evaluate.html)
+`--beta` is a regularization parameter, higher values will remove more noise but re-introduce bias field inhomogeneity.
 
-## Contribute
-If you'd like to contribute to this code base, have a look at our [contribution guide](https://meld-graph.readthedocs.io/en/latest/contributing.html)
+### 3. Run the MELD-graph pipeline with `--uhf_highres`
 
+Prepare your data as usual, then add `--uhf_highres` to the standard command, e.g.:
+```bash
+DOCKER_USER="$(id -u):$(id -g)" docker compose run meld_graph \
+    python scripts/new_patient_pipeline/new_pt_pipeline.py \
+    -id sub-01 --uhf_highres
+```
 
-## Acknowledgments
+The flag is available both on `new_pt_pipeline.py` and on `run_script_segmentation.py`. It replaces the single `recon-all -all` call with a pipeline adapted to high-resolution, non-uniform 7T data:
 
-We would like to thank 
-- The [MELD consortium](https://meldproject.github.io//docs/collaborator_list.pdf) for providing the data to train this classifier and their expertise to build this pipeline.
-- [Lennart Walger](https://github.com/1-w) and [Andrew Chen](https://github.com/andy1764), for their help testing and improving the MELD pipeline to v1.1.0.
-- [Ulysses Popple](https://github.com/ulyssesdotcodes) for his help building the docs and dockers.
-- [Cornelius Kronlage](https://github.com/ckronlage) highlighting issues in v2.2.1 and suggesting solutions in v2.2.2
+1. **Intensity rescaling** — MP2RAGE UNI volumes usually span `[-0.5, 0.5]`. Negative values break SPM and FreeSurfer (the gray–white contrast feature is computed from the unnormalised `rawavg.mgz`)
+2. **Bias field correction** with SPM (`meld_graph/bias_field_spm.py`).
+3. **`recon-all -autorecon1 -noskullstrip -hires`**, with a per-subject expert options file reducing `mris_inflate` to 50 iterations, which `-hires` requires.
+4. **Skull stripping with `mri_synthstrip --no-csf`**, which should be more robust than FreeSurfer's watershed stripping on 7T contrast.
+5. **`recon-all -autorecon2 -autorecon3 -hires`**, with `-FLAIR`/`-FLAIRpial` when a FLAIR is available.
 
-## Contacts
+**Limitations.** `--uhf_highres` cannot be combined with:
 
-Contact the MELD team at `meld.study@gmail.com`
+- `--parallelise` — subjects are processed one at a time; use `--threads` to speed up the individual `recon-all` calls instead.
+- `--fastsurfer` — the pipeline is built on `recon-all -hires`, which FastSurfer does not provide.
 
-*Please note that we are a small team and only have one day a week dedicated to the support of the MELD tools ([MELD Graph](https://github.com/MELDProject/meld_graph) and [AID-HS](https://github.com/MELDProject/AID-HS)). We will answer your emails as soon as we can!*
+Both combinations raise `NotImplementedError`.
+
+**Intermediate files**, useful for QC and when restarting a failed run:
+
+- `output/preproc/<subject>/rescaled_*.nii.gz` and `bfc_*.nii.gz` — the rescaled and bias field corrected T1 handed to `recon-all`.
+
